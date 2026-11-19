@@ -182,6 +182,10 @@
           <input id="fileInput" type="file" accept=".xlsx,.xls,.csv,.tsv,text/csv,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel">
           <p class="format-note">CSV/TSV contain values only. Google Fonts load when available; other families use local fallbacks.</p>
         </div>
+        <div id="sheetField" class="field" hidden>
+          <div class="field-head"><label for="sheetSelect">Worksheet</label><span class="field-hint">SHEET TAB</span></div>
+          <select id="sheetSelect" aria-label="Select worksheet"></select>
+        </div>
         <div class="divider"></div>
         <div class="field">
           <div class="field-head"><label for="imageTitle">Image title</label><span class="field-hint">OPTIONAL</span></div>
@@ -216,7 +220,7 @@
         ocean: { header: '#28627a', headerText: '#ffffff', stripe: '#eff6f8', accent: '#b5e5df' },
         graphite: { header: '#424a50', headerText: '#ffffff', stripe: '#f2f3f4', accent: '#e4c47d' }
       };
-      const state = { rows: null, styles: null, cellTypes: null, columnWidths: null, rowHeights: null, merges: [], name: '', theme: 'forest' };
+      const state = { rows: null, styles: null, cellTypes: null, columnWidths: null, rowHeights: null, merges: [], workbookData: null, name: '', theme: 'forest' };
       const googleFontLoads = new Map();
       let loadGeneration = 0;
       const canvas = document.getElementById('sheetCanvas');
@@ -281,8 +285,17 @@
         return `#${channels.map(channel => Math.round(tint > 0 ? channel + (255 - channel) * tint : channel * (1 + tint)).toString(16).padStart(2, '0')).join('')}`;
       }
 
-      async function loadWorkbook(workbook, name, styledWorkbook, gid) {
-        const sheetName = workbook.Workbook?.Sheets?.find(item => String(item.SheetId ?? item.sheetId ?? item.sheetid) === String(gid))?.name || workbook.SheetNames[0];
+      async function loadWorkbook(workbook, name, styledWorkbook, gid, requestedSheetName) {
+        if (state.workbookData?.workbook !== workbook) {
+          state.workbookData = { workbook, name, styledWorkbook, gid };
+          const selector = el('sheetSelect');
+          selector.replaceChildren(...workbook.SheetNames.map(sheetName => new Option(sheetName, sheetName)));
+          el('sheetField').hidden = workbook.SheetNames.length < 2;
+        }
+        const gidSheetName = workbook.Workbook?.Sheets?.find(item => String(item.SheetId ?? item.sheetId ?? item.sheetid) === String(gid))?.name;
+        const preferredSheet = requestedSheetName || gidSheetName || workbook.SheetNames[0];
+        const sheetName = workbook.SheetNames.includes(preferredSheet) ? preferredSheet : workbook.SheetNames[0];
+        el('sheetSelect').value = sheetName;
         const sheet = workbook.Sheets[sheetName];
         if (!sheet) throw new Error('This workbook does not contain a worksheet.');
         const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
@@ -636,6 +649,8 @@
           } else {
             const text = await file.text();
             const delimiter = extension === 'tsv' ? '\t' : (text.split('\n', 1)[0].split('\t').length > text.split('\n', 1)[0].split(',').length ? '\t' : ',');
+            state.workbookData = null;
+            el('sheetField').hidden = true;
             await loadRows(parseDelimited(text.replace(/^\uFEFF/, ''), delimiter), file.name);
           }
         } catch (error) { showError(error.message || 'Could not read this spreadsheet.'); }
@@ -669,6 +684,10 @@
         }
       });
       el('sheetUrl').addEventListener('keydown', event => { if (event.key === 'Enter') el('loadUrl').click(); });
+      el('sheetSelect').addEventListener('change', event => {
+        const data = state.workbookData;
+        if (data) loadWorkbook(data.workbook, data.name, data.styledWorkbook, data.gid, event.target.value);
+      });
       document.querySelectorAll('.theme-option').forEach(button => button.addEventListener('click', () => {
         state.theme = button.dataset.theme;
         document.querySelectorAll('.theme-option').forEach(option => option.setAttribute('aria-pressed', String(option === button)));
